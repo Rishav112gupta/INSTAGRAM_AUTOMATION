@@ -1,0 +1,642 @@
+{
+  "name": "Instagram - 2. Publish approved posts",
+  "id": "iaOnlyPublish0002",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 2. Publish approved posts\nRuns **every 15 minutes**.\n\nPublishes rows whose Status is **APPROVED** and whose date/time has arrived, using the official Instagram API. Writes the Instagram link back to the sheet (Status **PUBLISHED**) or the reason it failed (Status **FAILED**).\n\nOnly APPROVED rows are ever published. A failed post is never retried automatically, so nothing is posted twice.\n\n**Setup:** open **Config**: paste your Google Sheet link and your Instagram account ID. Pick your credentials in the Google Sheets nodes and the Instagram nodes.",
+        "height": 350,
+        "width": 560,
+        "color": 5
+      },
+      "id": "25822e3e-ddd2-5ced-85f7-84084af0c459",
+      "name": "Read me (2)",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        -340
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "5ae88a01-0b74-5811-a288-944bf394dc7f",
+      "name": "Every 15 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -400,
+        60
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "ed1792ed-9acf-5931-93ab-cf0c17c79776",
+      "name": "Test run",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e8c60ed8-72b3-5510-80c7-c76a77c0f4b4",
+              "name": "sheetUrl",
+              "value": "PASTE_YOUR_GOOGLE_SHEET_LINK_HERE",
+              "type": "string"
+            },
+            {
+              "id": "128b6e23-ac0c-5e99-b3d3-7534c8d016b0",
+              "name": "instagramAccountId",
+              "value": "PASTE_YOUR_INSTAGRAM_ACCOUNT_ID",
+              "type": "string"
+            },
+            {
+              "id": "ebea440b-175a-5cf7-bf26-5c661d9bda21",
+              "name": "instagramApiBase",
+              "value": "https://graph.instagram.com/v25.0",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3a9622af-1fb3-5673-83b6-cd5a2d88cf96",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -160,
+        140
+      ],
+      "notes": "Edit me: sheet link + Instagram account ID",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Config').first().json.sheetUrl }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Settings"
+        },
+        "options": {}
+      },
+      "id": "fcbf7ef2-d669-5734-b9db-077061bc52d0",
+      "name": "Read Settings",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        60,
+        140
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "googleSheetsCredential",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Config').first().json.sheetUrl }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Posts"
+        },
+        "options": {}
+      },
+      "id": "cbe1c9f7-2bc5-5316-ac52-51d6aea18249",
+      "name": "Read Posts",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        280,
+        140
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "googleSheetsCredential",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================================\n// FIND POSTS TO PUBLISH  (Code node, mode: Run Once for All Items)\n// Picks rows with Status = APPROVED whose posting time has arrived.\n// Only APPROVED rows are ever published (a human must approve first).\n// Rows that are approved but not publishable get Status PROBLEM + a reason.\n// ============================================================================\n\nconst settings = {};\nfor (const item of $('Read Settings').all()) {\n  const key = String(item.json['Setting'] ?? '').trim();\n  if (key) settings[key] = String(item.json['Value'] ?? '').trim();\n}\nconst tz = settings['Timezone'] || 'Asia/Kolkata';\nconst now = DateTime.now().setZone(tz);\n\nfunction parseDateTime(dateText, timeText) {\n  const date = String(dateText ?? '').trim();\n  const time = /^\\d{1,2}:\\d{2}$/.test(String(timeText ?? '').trim()) ? String(timeText).trim() : '18:00';\n  if (!date) return null;\n  for (const fmt of ['yyyy-MM-dd H:mm', 'd/M/yyyy H:mm', 'd-M-yyyy H:mm']) {\n    const d = DateTime.fromFormat(`${date} ${time}`, fmt, { zone: tz });\n    if (d.isValid) return d;\n  }\n  return null;\n}\n\nconst output = [];\nfor (const item of $input.all()) {\n  const row = { ...item.json };\n  if (String(row['Status'] ?? '').trim().toUpperCase() !== 'APPROVED') continue;\n  if (String(row['Instagram Media ID'] ?? '').trim()) continue; // already posted - never post twice\n\n  const when = parseDateTime(row['Scheduled Date'], row['Post Time']);\n  const problems = [];\n  if (!when) problems.push('Scheduled Date is missing or not in YYYY-MM-DD format.');\n  if (!/^https:\\/\\//.test(String(row['Image URL'] ?? ''))) problems.push('Image URL is empty or not a public https link.');\n  const caption = String(row['Caption'] ?? '').trim();\n  if (!caption) problems.push('Caption is empty.');\n  const tags = String(row['Hashtags'] ?? '').split(/[\\s,]+/).map((t) => t.replace(/^#+/, '')).filter(Boolean);\n  if (tags.length > 30) problems.push(`Too many hashtags (${tags.length}); Instagram allows 30.`);\n  const fullCaption = tags.length ? `${caption}\\n\\n${tags.map((t) => '#' + t).join(' ')}` : caption;\n  if (fullCaption.length > 2200) problems.push(`Caption + hashtags is ${fullCaption.length} characters; Instagram allows 2,200.`);\n\n  if (problems.length) {\n    output.push({ json: { ...row, Status: 'PROBLEM', Error: problems.join(' '), _publish: false } });\n    continue;\n  }\n  if (when > now) continue; // not time yet\n\n  output.push({\n    json: {\n      ...row,\n      Status: 'PUBLISHING',\n      Error: '',\n      'Last Updated': now.toFormat('yyyy-MM-dd HH:mm'),\n      _publish: true,\n      _caption: fullCaption,\n    },\n  });\n}\nreturn output;\n"
+      },
+      "id": "a8a1c3e8-ce2c-52c3-a42f-ec1848ef9fe9",
+      "name": "Find posts to publish",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "836782d5-517e-58c1-941b-a4f4729a0bb4",
+              "leftValue": "={{ $json._publish }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "58f468d0-8cbb-5abc-8c78-e6c677e4a7cf",
+      "name": "Publish now?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Config').first().json.sheetUrl }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Posts"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": []
+        },
+        "options": {
+          "handlingExtraData": "ignoreIt",
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "16673ddc-5692-57ba-9ff8-31be7d49aab0",
+      "name": "Mark as publishing",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        940,
+        40
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "googleSheetsCredential",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.instagramApiBase }}/{{ $('Config').first().json.instagramAccountId }}/media",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "image_url",
+              "value": "={{ $('Find posts to publish').item.json['Image URL'] }}"
+            },
+            {
+              "name": "caption",
+              "value": "={{ $('Find posts to publish').item.json._caption }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "62382acf-076e-52c4-8060-db6b2e643d04",
+      "name": "Create Instagram container",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1160,
+        40
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "instagramTokenCredential",
+          "name": "Instagram access token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 30,
+        "unit": "seconds"
+      },
+      "id": "2f0c2dce-fbdb-54d8-9133-73105821224a",
+      "name": "Wait 30 seconds",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1380,
+        40
+      ],
+      "webhookId": "3960346a-dc74-5a6d-863f-e3172e229cb2"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.instagramApiBase }}/{{ $('Create Instagram container').item.json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "status_code"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "6eb4ec50-680d-5ed4-bb92-33096bae660d",
+      "name": "Check container",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        40
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "instagramTokenCredential",
+          "name": "Instagram access token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.instagramApiBase }}/{{ $('Config').first().json.instagramAccountId }}/media_publish",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "creation_id",
+              "value": "={{ $('Create Instagram container').item.json.id }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "275eb17e-76bf-5197-8e7c-f868e23fed33",
+      "name": "Publish to Instagram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1820,
+        40
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "instagramTokenCredential",
+          "name": "Instagram access token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.instagramApiBase }}/{{ $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "permalink"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "287f05c2-9f97-5c6e-99a6-c40ed7dce7d1",
+      "name": "Get post link",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2040,
+        40
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "instagramTokenCredential",
+          "name": "Instagram access token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================================\n// PUBLISH RESULT  (Code node, mode: Run Once for Each Item)\n// Looks at the answers of the Instagram steps and writes the outcome:\n// PUBLISHED (with the Instagram link) or FAILED (with a clear reason).\n// A FAILED post is never retried automatically - set Status back to APPROVED\n// to try again. This guarantees nothing is posted twice by accident.\n// ============================================================================\n\nconst row = $('Find posts to publish').item.json;\nconst container = $('Create Instagram container').item.json;\nconst status = $('Check container').item.json;\nconst published = $('Publish to Instagram').item.json;\nconst media = $json;\nconst settings = {};\nfor (const item of $('Read Settings').all()) {\n  const key = String(item.json['Setting'] ?? '').trim();\n  if (key) settings[key] = String(item.json['Value'] ?? '').trim();\n}\n\nfunction errorOf(r) {\n  if (!r || !r.error) return null;\n  const e = r.error;\n  if (typeof e === 'string') return { message: e };\n  return { message: e.error_user_msg || e.message || JSON.stringify(e), code: e.code };\n}\n\nconst result = { ...row };\ndelete result._publish;\ndelete result._caption;\nresult['Last Updated'] = DateTime.now().setZone(settings['Timezone'] || 'Asia/Kolkata').toFormat('yyyy-MM-dd HH:mm');\nif (container && container.id) result['Container ID'] = String(container.id);\n\nif (published && published.id) {\n  result['Status'] = 'PUBLISHED';\n  result['Instagram Media ID'] = String(published.id);\n  result['Instagram URL'] = (media && media.permalink) || '';\n  result['Error'] = '';\n  return { json: result };\n}\n\nconst err = errorOf(container) || errorOf(status) || errorOf(published) || { message: 'Unknown problem - no media id was returned.' };\nlet hint = '';\nif (err.code === 190) hint = ' The Instagram access token is invalid or expired: create a new token and update the \"Instagram access token\" credential in n8n (see guide).';\nelse if (status && status.status_code && status.status_code !== 'FINISHED') hint = ` Instagram had not finished processing the image (status ${status.status_code}). Set Status back to APPROVED to try again.`;\nelse if (/media|image|url|download/i.test(err.message)) hint = ' Check that \"Image URL\" opens a JPEG image in a private browser window.';\n\nresult['Status'] = 'FAILED';\nresult['Error'] = `Instagram: ${err.message}.${hint} Nothing was posted. To retry, set Status to APPROVED.`;\nreturn { json: result };\n",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "e716d25d-483b-57a1-af15-de7f604f76f9",
+      "name": "Publish result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2260,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Config').first().json.sheetUrl }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Posts"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": []
+        },
+        "options": {
+          "handlingExtraData": "ignoreIt",
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "bc83a61d-9ba8-5679-a0dd-7f3ed4e1846f",
+      "name": "Save to Posts sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2480,
+        140
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "googleSheetsCredential",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 15 minutes": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test run": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Read Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Settings": {
+      "main": [
+        [
+          {
+            "node": "Read Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Posts": {
+      "main": [
+        [
+          {
+            "node": "Find posts to publish",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find posts to publish": {
+      "main": [
+        [
+          {
+            "node": "Publish now?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish now?": {
+      "main": [
+        [
+          {
+            "node": "Mark as publishing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save to Posts sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as publishing": {
+      "main": [
+        [
+          {
+            "node": "Create Instagram container",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Instagram container": {
+      "main": [
+        [
+          {
+            "node": "Wait 30 seconds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 30 seconds": {
+      "main": [
+        [
+          {
+            "node": "Check container",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check container": {
+      "main": [
+        [
+          {
+            "node": "Publish to Instagram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish to Instagram": {
+      "main": [
+        [
+          {
+            "node": "Get post link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get post link": {
+      "main": [
+        [
+          {
+            "node": "Publish result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish result": {
+      "main": [
+        [
+          {
+            "node": "Save to Posts sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata",
+    "saveManualExecutions": true
+  },
+  "pinData": {},
+  "tags": []
+}

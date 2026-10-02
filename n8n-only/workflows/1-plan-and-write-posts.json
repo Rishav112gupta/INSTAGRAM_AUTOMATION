@@ -1,0 +1,609 @@
+{
+  "name": "Instagram - 1. Plan & write posts (AI)",
+  "id": "iaOnlyPlanWrite01",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 1. Plan & write posts\nRuns **every day at 08:00** (and when you click *Test workflow*).\n\n1. Gives every new topic in the **Posts** tab a Post ID and a date (every N days - set in the **Settings** tab).\n2. A few days before the date, the AI writes the caption, hashtags and creates the image.\n3. The row becomes **NEEDS_REVIEW**. A person reads it and sets Status to **APPROVED** (or **REGENERATE**).\n\n**Setup:** open the **Config** node and paste your Google Sheet link and Cloudinary details. Then pick your credentials in the Google Sheets and OpenAI nodes.",
+        "height": 330,
+        "width": 560,
+        "color": 5
+      },
+      "id": "c3fd9071-41fa-5815-91d0-aebb3c02afac",
+      "name": "Read me (1)",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "id": "3e31bf54-91a7-5d9f-97d2-241643b9c153",
+      "name": "Every day 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -400,
+        60
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "55d3847e-1f5d-5e13-a142-aa058f12491e",
+      "name": "Test run",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e8c60ed8-72b3-5510-80c7-c76a77c0f4b4",
+              "name": "sheetUrl",
+              "value": "PASTE_YOUR_GOOGLE_SHEET_LINK_HERE",
+              "type": "string"
+            },
+            {
+              "id": "021eabfd-df30-5c3f-a74c-7efd6e90c4f5",
+              "name": "cloudinaryCloudName",
+              "value": "PASTE_CLOUDINARY_CLOUD_NAME",
+              "type": "string"
+            },
+            {
+              "id": "c6673b70-7940-5ac4-b628-e9a4e3346663",
+              "name": "cloudinaryUploadPreset",
+              "value": "PASTE_CLOUDINARY_UNSIGNED_UPLOAD_PRESET",
+              "type": "string"
+            },
+            {
+              "id": "c48faa25-a9aa-5ad9-8387-63ded73475bd",
+              "name": "textModel",
+              "value": "gpt-5-mini",
+              "type": "string"
+            },
+            {
+              "id": "780e6240-3647-5c4a-850b-1d4d5ef5fd6d",
+              "name": "imageModel",
+              "value": "gpt-image-1",
+              "type": "string"
+            },
+            {
+              "id": "80a0d3e4-5b74-56e9-9541-c45497468ee5",
+              "name": "openaiBaseUrl",
+              "value": "https://api.openai.com/v1",
+              "type": "string"
+            },
+            {
+              "id": "b3332c83-f5c6-5009-a5a4-b9d07f3de8aa",
+              "name": "cloudinaryBaseUrl",
+              "value": "https://api.cloudinary.com/v1_1",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3a9622af-1fb3-5673-83b6-cd5a2d88cf96",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -160,
+        140
+      ],
+      "notes": "Edit me: sheet link + Cloudinary",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Config').first().json.sheetUrl }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Settings"
+        },
+        "options": {}
+      },
+      "id": "fcbf7ef2-d669-5734-b9db-077061bc52d0",
+      "name": "Read Settings",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        60,
+        140
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "googleSheetsCredential",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Config').first().json.sheetUrl }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Posts"
+        },
+        "options": {}
+      },
+      "id": "cbe1c9f7-2bc5-5316-ac52-51d6aea18249",
+      "name": "Read Posts",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        280,
+        140
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "googleSheetsCredential",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================================\n// PLAN POSTS  (Code node, mode: Run Once for All Items)\n// Input: rows of the \"Posts\" tab. Also reads the \"Settings\" tab.\n// 1. Gives every new topic a Post ID and the earliest free posting date\n//    on the \"every N days\" pattern (one post per date).\n// 2. Marks rows whose posting date is close enough to be written by AI now,\n//    and rows a person set to REGENERATE.\n// Output: only rows that changed or must be generated (field _generate).\n// ============================================================================\n\nconst settings = {};\nfor (const item of $('Read Settings').all()) {\n  const key = String(item.json['Setting'] ?? '').trim();\n  if (key) settings[key] = String(item.json['Value'] ?? '').trim();\n}\n\nconst tz = settings['Timezone'] || 'Asia/Kolkata';\nconst everyNDays = Math.max(1, parseInt(settings['Post Every N Days'] || '4', 10) || 4);\nconst defaultTime = /^\\d{1,2}:\\d{2}$/.test(settings['Default Post Time'] || '') ? settings['Default Post Time'] : '18:00';\nconst leadDays = Math.max(0, parseInt(settings['Generate Days Before'] || '3', 10) || 0);\nconst today = DateTime.now().setZone(tz).startOf('day');\n\nfunction parseDate(value) {\n  const text = String(value ?? '').trim();\n  if (!text) return null;\n  let d = DateTime.fromISO(text, { zone: tz });                    // 2026-10-05\n  if (!d.isValid) d = DateTime.fromFormat(text, 'd/M/yyyy', { zone: tz }); // 05/10/2026 (day first)\n  if (!d.isValid) d = DateTime.fromFormat(text, 'd-M-yyyy', { zone: tz });\n  return d.isValid ? d.startOf('day') : null;\n}\n\nconst startDate = parseDate(settings['Start Date']) || today;\n\n// First date on the \"every N days\" grid (counted from Start Date) that is >= minDate.\nfunction nextGridDate(minDate) {\n  if (minDate <= startDate) return startDate;\n  const daysFromStart = Math.floor(minDate.diff(startDate, 'days').days + 1e-9);\n  const steps = Math.ceil(daysFromStart / everyNDays);\n  let d = startDate.plus({ days: steps * everyNDays });\n  if (d < minDate) d = d.plus({ days: everyNDays });\n  return d;\n}\n\nconst rows = $input.all().map((item) => ({ ...item.json }));\n\n// Highest existing Post ID number (P0001, P0002, ...)\nlet maxId = 0;\nfor (const row of rows) {\n  const m = String(row['Post ID'] ?? '').match(/(\\d+)/);\n  if (m) maxId = Math.max(maxId, parseInt(m[1], 10));\n}\n\n// Dates already taken by a post (one post per date)\nconst taken = new Set();\nfor (const row of rows) {\n  const d = parseDate(row['Scheduled Date']);\n  if (d && String(row['Topic'] ?? '').trim()) taken.add(d.toISODate());\n}\n\n// Earliest free date on the \"every N days\" grid, from today onwards.\nfunction nextFreeDate() {\n  let d = nextGridDate(today);\n  while (taken.has(d.toISODate())) d = d.plus({ days: everyNDays });\n  taken.add(d.toISODate());\n  return d;\n}\n\nconst output = [];\nfor (const row of rows) {\n  const topic = String(row['Topic'] ?? '').trim();\n  if (!topic) continue;\n  let status = String(row['Status'] ?? '').trim().toUpperCase();\n  let changed = false;\n\n  if (status === '' || status === 'NEW') {\n    if (!String(row['Post ID'] ?? '').trim()) {\n      maxId += 1;\n      row['Post ID'] = 'P' + String(maxId).padStart(4, '0');\n    }\n    let date = parseDate(row['Scheduled Date']);\n    if (!date) date = nextFreeDate();\n    row['Scheduled Date'] = date.toISODate();\n    if (!String(row['Post Time'] ?? '').trim()) row['Post Time'] = defaultTime;\n    status = 'PLANNED';\n    row['Status'] = status;\n    changed = true;\n  }\n\n  const date = parseDate(row['Scheduled Date']);\n  const dueForWriting = status === 'PLANNED' && date && date.diff(today, 'days').days <= leadDays;\n  const generate = status === 'REGENERATE' || Boolean(dueForWriting);\n\n  if (changed || generate) {\n    row['Last Updated'] = DateTime.now().setZone(tz).toFormat('yyyy-MM-dd HH:mm');\n    output.push({ json: { ...row, _generate: generate } });\n  }\n}\n\nreturn output;\n"
+      },
+      "id": "419721d3-55ba-5ccb-abd7-e3109c917218",
+      "name": "Plan posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e38b29a5-8b4e-5621-8d85-cdde6ac21fdb",
+              "leftValue": "={{ $json._generate }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "fe97f4b7-0102-5786-ae24-6780c3dd3d8d",
+      "name": "Time to write?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================================\n// BUILD AI REQUEST  (Code node, mode: Run Once for Each Item)\n// Builds the request that asks the AI to write one Instagram post.\n// The AI must NOT invent prices, dates, claims etc. - only facts from the\n// \"Settings\" tab (Verified Facts) and the row's \"Important Info\" may be used.\n// ============================================================================\n\nconst settings = {};\nfor (const item of $('Read Settings').all()) {\n  const key = String(item.json['Setting'] ?? '').trim();\n  if (key) settings[key] = String(item.json['Value'] ?? '').trim();\n}\nconst config = $('Config').first().json;\nconst row = $json;\n\nconst brand = [\n  ['Company name', settings['Company Name']],\n  ['About the company', settings['Company Description']],\n  ['Usual audience', settings['Target Audience']],\n  ['Brand voice / tone', settings['Brand Voice']],\n  ['Words to avoid', settings['Words To Avoid']],\n  ['Hashtags we always like to use', settings['Default Hashtags']],\n  ['Content rules', settings['Content Rules']],\n]\n  .filter(([, v]) => v)\n  .map(([k, v]) => `- ${k}: ${v}`)\n  .join('\\n');\n\nconst system = `You are an expert Instagram content writer for a company. Write ORIGINAL, engaging, on-brand posts.\n\nSTRICT FACT RULES (these override everything else):\n- Never invent prices, fees, discounts, dates, exam dates, deadlines, course details, results, rankings,\n  statistics, guarantees, testimonials, names, phone numbers, emails, addresses or links.\n- You may only state such a fact if it appears in VERIFIED FACTS or in POST DETAILS below.\n- If a fact is needed but missing, leave it out (or write a placeholder like [EXAM DATE]) and list what is\n  missing in \"missing_information\".\n- Never promise outcomes (\"guaranteed selection\", \"100% results\") unless that exact claim is a verified fact.\n\nReturn JSON only:\n- headline: max ~8 words, no hashtags\n- caption: the Instagram caption WITHOUT hashtags, under 1800 characters, with line breaks, call to action near the end\n- hashtags: 8-20 hashtags without the # sign\n- image_prompt: a detailed description of an image for an image generator. The image must contain NO text, letters, numbers or logos.\n- missing_information: list of facts a human must add or check (empty list if none)`;\n\nconst user = `BRAND:\n${brand || '- (not filled in yet)'}\n\nVERIFIED FACTS (the only facts you may state):\n${settings['Verified Facts'] || '- none - do not state any specific facts, prices or dates'}\n\nPOST DETAILS:\n- Topic: ${row['Topic'] || ''}\n- Category: ${row['Category'] || 'General'}\n- Target audience: ${row['Target Audience'] || settings['Target Audience'] || ''}\n- Important information: ${row['Important Info'] || '(none)'}\n- Call to action: ${row['Call To Action'] || '(choose a suitable one, without inventing offers)'}\n- Language: ${settings['Language'] || 'English'}\n${row['Status'] === 'REGENERATE' && row['Review Notes'] ? `\\nThe previous version was rejected. Reviewer notes: ${row['Review Notes']}` : ''}\nVisual style for the image: ${settings['Visual Style'] || 'clean, modern, friendly'}`;\n\nconst schema = {\n  type: 'object',\n  additionalProperties: false,\n  required: ['headline', 'caption', 'hashtags', 'image_prompt', 'missing_information'],\n  properties: {\n    headline: { type: 'string' },\n    caption: { type: 'string' },\n    hashtags: { type: 'array', items: { type: 'string' } },\n    image_prompt: { type: 'string' },\n    missing_information: { type: 'array', items: { type: 'string' } },\n  },\n};\n\nreturn {\n  json: {\n    ...row,\n    _openai: {\n      model: config.textModel,\n      messages: [\n        { role: 'system', content: system },\n        { role: 'user', content: user },\n      ],\n      response_format: { type: 'json_schema', json_schema: { name: 'instagram_post', strict: true, schema } },\n    },\n  },\n};\n",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "a55f40e7-003e-5a7d-ade4-10700a0e4037",
+      "name": "Build AI request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.openaiBaseUrl }}/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json._openai) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 180000
+        }
+      },
+      "id": "28d4d6a9-a79e-5b48-b105-ffc6a6085e9a",
+      "name": "Write post with AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1160,
+        40
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openAiCredential",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================================\n// CHECK AI TEXT  (Code node, mode: Run Once for Each Item)\n// Reads the AI answer, validates it against Instagram's rules, and flags any\n// price / date / percentage / phone / guarantee etc. that is NOT in the\n// verified facts or the post's Important Info (so a human checks it).\n// Sets _ok = false if the AI call failed (the row is left for a retry tomorrow).\n// ============================================================================\n\nconst row = $('Build AI request').item.json;\nconst response = $json;\nconst config = $('Config').first().json;\nconst settings = {};\nfor (const item of $('Read Settings').all()) {\n  const key = String(item.json['Setting'] ?? '').trim();\n  if (key) settings[key] = String(item.json['Value'] ?? '').trim();\n}\n\nfunction fail(message) {\n  const clean = { ...row };\n  delete clean._openai;\n  return { json: { ...clean, _ok: false, Error: 'AI writing failed: ' + message } };\n}\n\nif (response.error) {\n  return fail(typeof response.error === 'string' ? response.error : response.error.message || JSON.stringify(response.error));\n}\nconst message = response.choices && response.choices[0] && response.choices[0].message;\nif (!message) return fail('unexpected answer from the AI service');\nif (message.refusal) return fail('the AI declined: ' + message.refusal);\n\nlet post;\ntry {\n  let text = String(message.content || '').trim();\n  const fence = text.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (fence) text = fence[1];\n  post = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));\n} catch (e) {\n  return fail('the answer was not valid JSON');\n}\n\nconst headline = String(post.headline || '').trim().slice(0, 120);\nlet caption = String(post.caption || '').trim();\nconst imagePrompt = String(post.image_prompt || '').trim();\nif (!headline || !caption || !imagePrompt) return fail('headline, caption or image prompt was empty');\n\n// Hashtags: no #, no spaces, unique, max 30 (Instagram limit)\nconst seen = new Set();\nconst hashtags = [];\nfor (const raw of [...(post.hashtags || []), ...String(settings['Default Hashtags'] || '').split(/[\\s,]+/)]) {\n  const tag = String(raw).replace(/^#+/, '').replace(/\\s+/g, '').trim();\n  if (!tag || !/^[\\p{L}\\p{N}_]+$/u.test(tag) || seen.has(tag.toLowerCase())) continue;\n  seen.add(tag.toLowerCase());\n  hashtags.push(tag);\n}\nconst tags = hashtags.slice(0, 30);\nconst hashtagText = tags.map((t) => '#' + t).join(' ');\nconst maxCaption = 2200 - (hashtagText ? hashtagText.length + 2 : 0);\nconst notes = [];\nif (caption.length > maxCaption) {\n  caption = caption.slice(0, maxCaption - 1) + '…';\n  notes.push('Caption was shortened to fit Instagram\\'s 2,200 character limit.');\n}\n\n// ---- Fact guard -----------------------------------------------------------\nconst sources = [settings['Verified Facts'], settings['Company Name'], settings['Website'], settings['Contact Info'], row['Important Info'], row['Topic'], row['Call To Action']]\n  .filter(Boolean)\n  .join('\\n');\nconst sourceLower = sources.toLowerCase();\nconst sourceDigits = sourceLower.replace(/[₹$€£,\\s]|rs\\.?|inr/g, '');\nconst months = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';\nconst checks = [\n  ['Price', /(?:₹|rs\\.?|inr|\\$|usd|€|£)\\s?\\d[\\d,]*(?:\\.\\d+)?|\\d[\\d,]*(?:\\.\\d+)?\\s?(?:rupees|\\/-|lakhs?|crores?)/gi],\n  ['Percentage', /\\d+(?:\\.\\d+)?\\s?%|\\d+(?:\\.\\d+)?\\s?percent/gi],\n  ['Date', new RegExp(`\\\\b\\\\d{1,2}(?:st|nd|rd|th)?\\\\s+${months}\\\\b(?:,?\\\\s+\\\\d{4})?|\\\\b${months}\\\\s+\\\\d{1,2}(?:st|nd|rd|th)?\\\\b|\\\\b\\\\d{1,2}[/-]\\\\d{1,2}[/-]\\\\d{2,4}\\\\b`, 'gi')],\n  ['Phone number', /(?:\\+\\d{1,3}[\\s-]?)?(?:\\d[\\s-]?){10,12}\\b/g],\n  ['Email', /[\\w.+-]+@[\\w-]+\\.[\\w.-]+/g],\n  ['Link', /https?:\\/\\/\\S+|www\\.\\S+/gi],\n  ['Offer / discount', /\\b(?:\\d+\\s?%\\s?off|flat\\s+\\d+|discount|free\\s+(?:class|course|trial|demo)|scholarship|offer\\s+ends?)\\b/gi],\n  ['Guarantee / absolute claim', /\\b(?:guarantee[ds]?|100\\s?%|assured|sure[- ]shot|no\\.?\\s?1|number\\s+one|best\\s+in|top\\s+ranked)\\b/gi],\n  ['Numeric claim', /\\b\\d[\\d,]*\\+?\\s+(?:students|selections|toppers|ranks?|years|learners|results|centres|centers|branches)\\b/gi],\n  ['Placeholder to fill in', /\\[[A-Z][A-Z0-9 _/-]{2,40}\\]/g],\n];\nconst flags = [];\nconst textToCheck = [headline, caption].join('\\n').replace(/#\\w+/g, '');\nfor (const [label, re] of checks) {\n  for (const m of textToCheck.matchAll(re)) {\n    const found = m[0].trim();\n    const digits = found.toLowerCase().replace(/[₹$€£,\\s]|rs\\.?|inr/g, '');\n    const verified = label !== 'Placeholder to fill in' && (sourceLower.includes(found.toLowerCase()) || (digits && sourceDigits.includes(digits)));\n    if (!verified) flags.push(`${label} \"${found}\" is not in Verified Facts / Important Info - check it.`);\n  }\n}\nfor (const missing of post.missing_information || []) {\n  if (String(missing).trim()) flags.push('Missing information: ' + String(missing).trim());\n}\n\nconst clean = { ...row };\ndelete clean._openai;\nreturn {\n  json: {\n    ...clean,\n    _ok: true,\n    Headline: headline,\n    Caption: caption,\n    Hashtags: tags.join(' '),\n    'Review Notes': [...new Set([...flags, ...notes])].join('\\n') || 'No issues found - please still read it before approving.',\n    Error: '',\n    _imageRequest: {\n      model: config.imageModel,\n      prompt: `${imagePrompt}\\nStyle: ${settings['Visual Style'] || 'clean, modern, friendly'}.\\nDo not include any text, letters, numbers or logos in the image.`,\n      size: '1024x1536',\n      n: 1,\n    },\n  },\n};\n",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "b5dcb05a-b882-5556-acb1-3a853c9f1e98",
+      "name": "Check AI text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a1bc4e43-844b-5861-9f01-f9026c7e83e6",
+              "leftValue": "={{ $json._ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "ada54fd6-4ad6-5851-be4f-dee2c0f228ee",
+      "name": "Text OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1600,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.openaiBaseUrl }}/images/generations",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json._imageRequest) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 240000
+        }
+      },
+      "id": "74d51cc4-f145-5a05-a226-839aaccc3e72",
+      "name": "Create image with AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1820,
+        -60
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openAiCredential",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.cloudinaryBaseUrl }}/{{ $('Config').first().json.cloudinaryCloudName }}/image/upload",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ file: 'data:image/png;base64,' + (($json.data && $json.data[0] && $json.data[0].b64_json) || ''), upload_preset: $('Config').first().json.cloudinaryUploadPreset, folder: 'instagram-automation' }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "f4e68651-73f9-51bd-afed-f554db20f7e5",
+      "name": "Upload image to Cloudinary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2040,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================================\n// PREPARE ROW  (Code node, mode: Run Once for Each Item)\n// After the image was generated and uploaded to Cloudinary, builds the final\n// Instagram-ready image link (JPEG, 1080x1350 = Instagram's 4:5 portrait size)\n// and marks the post NEEDS_REVIEW for a human.\n// ============================================================================\n\nconst row = $('Check AI text').item.json;\nconst imageAnswer = $('Create image with AI').item.json;\nconst upload = $json;\nconst settings = {};\nfor (const item of $('Read Settings').all()) {\n  const key = String(item.json['Setting'] ?? '').trim();\n  if (key) settings[key] = String(item.json['Value'] ?? '').trim();\n}\n\nconst notes = String(row['Review Notes'] || '');\nconst result = { ...row };\ndelete result._imageRequest;\ndelete result._ok;\ndelete result._generate;\n\nfunction errorText(r) {\n  if (!r || !r.error) return '';\n  return typeof r.error === 'string' ? r.error : r.error.message || JSON.stringify(r.error);\n}\n\nconst imageError = errorText(imageAnswer) || (!(imageAnswer.data && imageAnswer.data[0]) ? 'no image returned' : '') || errorText(upload) || (!upload.secure_url ? 'image upload failed' : '');\n\nif (imageError) {\n  result['Image URL'] = '';\n  result['Review Notes'] = `IMAGE FAILED: ${imageError}. Set Status to REGENERATE to try again, or paste your own public JPEG link in \"Image URL\".\\n` + notes;\n} else {\n  // Cloudinary transformation: crop to 4:5, 1080x1350, convert to JPEG (Instagram only accepts JPEG).\n  const transform = ['c_fill', 'g_auto', 'w_1080', 'h_1350'];\n  let overlay = '';\n  if (/^(yes|true|y)$/i.test(settings['Headline On Image'] || '') && row['Headline']) {\n    // Optional: write the headline on the image (Cloudinary text overlay).\n    const text = encodeURIComponent(String(row['Headline']).slice(0, 80)).replace(/%2C/g, '%252C').replace(/%2F/g, '%252F');\n    overlay = `/l_text:Arial_64_bold:${text},co_white,b_rgb:00000099,w_960,c_fit/fl_layer_apply,g_south,y_90`;\n  }\n  const url = String(upload.secure_url).replace('/upload/', `/upload/${transform.join(',')}${overlay}/f_jpg,q_90/`).replace(/\\.(png|webp|jpe?g)$/i, '.jpg');\n  result['Image URL'] = url;\n}\n\nresult['Status'] = 'NEEDS_REVIEW';\nresult['Error'] = '';\nresult['Last Updated'] = DateTime.now().setZone(settings['Timezone'] || 'Asia/Kolkata').toFormat('yyyy-MM-dd HH:mm');\nreturn { json: result };\n",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "5cbf61ae-4d9b-583a-ae93-9a60a6edaa3f",
+      "name": "Prepare row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2260,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Config').first().json.sheetUrl }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Posts"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": []
+        },
+        "options": {
+          "handlingExtraData": "ignoreIt",
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "bc83a61d-9ba8-5679-a0dd-7f3ed4e1846f",
+      "name": "Save to Posts sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2480,
+        140
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "googleSheetsCredential",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every day 08:00": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test run": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Read Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Settings": {
+      "main": [
+        [
+          {
+            "node": "Read Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Posts": {
+      "main": [
+        [
+          {
+            "node": "Plan posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan posts": {
+      "main": [
+        [
+          {
+            "node": "Time to write?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Time to write?": {
+      "main": [
+        [
+          {
+            "node": "Build AI request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save to Posts sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build AI request": {
+      "main": [
+        [
+          {
+            "node": "Write post with AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write post with AI": {
+      "main": [
+        [
+          {
+            "node": "Check AI text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check AI text": {
+      "main": [
+        [
+          {
+            "node": "Text OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Text OK?": {
+      "main": [
+        [
+          {
+            "node": "Create image with AI",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save to Posts sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create image with AI": {
+      "main": [
+        [
+          {
+            "node": "Upload image to Cloudinary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload image to Cloudinary": {
+      "main": [
+        [
+          {
+            "node": "Prepare row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare row": {
+      "main": [
+        [
+          {
+            "node": "Save to Posts sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata",
+    "saveManualExecutions": true
+  },
+  "pinData": {},
+  "tags": []
+}

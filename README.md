@@ -7,6 +7,8 @@ Company info → content plan → category/topic → AI text → AI image → te
             → HUMAN APPROVAL → schedule → official Instagram API → post → logs & analytics
 ```
 
+> **No coding / no server?** Use the [**n8n-only version**](n8n-only/README.md): the same automation (AI writing, every-4th-day schedule, human approval, Instagram publishing) run entirely from a Google Sheet + n8n Cloud. Step-by-step guide included.
+
 > **Status:** The complete application is implemented and tested, including the real Instagram Graph API integration. By default it runs in **mock mode**: AI, images, Instagram and Google Sheets are simulated, so you can try everything without any accounts. **Real Instagram publishing still requires Meta configuration and credentials.** Follow [docs/INSTAGRAM_SETUP.md](docs/INSTAGRAM_SETUP.md). Until then, "published" posts are clearly labelled *simulated* and nothing is posted to Instagram.
 
 | Dashboard | Review screen |
