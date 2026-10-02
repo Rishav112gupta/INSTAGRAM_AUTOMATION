@@ -15,6 +15,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -36,8 +38,10 @@ SETTINGS = [
     {"Setting": "Generate Days Before", "Value": "3"},
     {"Setting": "Start Date", "Value": TODAY.isoformat()},
     {"Setting": "Default Hashtags", "Value": "acmeacademy"},
+    {"Setting": "Approver Email", "Value": "owner@example.com, editor@example.com"},
 ]
-COLS = ["Post ID", "Topic", "Category", "Target Audience", "Important Info", "Call To Action", "Scheduled Date", "Post Time", "Status", "Headline", "Caption", "Hashtags", "Image URL", "Review Notes", "Instagram URL", "Instagram Media ID", "Container ID", "Error", "Last Updated"]
+HOOK = "http://127.0.0.1:5699/webhook/instagram-approval"
+COLS = ["Post ID", "Topic", "Category", "Target Audience", "Important Info", "Call To Action", "Scheduled Date", "Post Time", "Status", "Headline", "Caption", "Hashtags", "Image URL", "Review Notes", "Instagram URL", "Instagram Media ID", "Container ID", "Error", "Last Updated", "Approval Code"]
 
 
 def row(n: int, **values) -> dict:
@@ -74,10 +78,14 @@ def to_test(wf: dict, posts: list, config: dict) -> dict:
             n.pop("credentials", None)
             n["type"], n["typeVersion"] = "n8n-nodes-base.code", 2
             if n["parameters"].get("operation") == "update":
-                n["parameters"] = {"jsCode": "return $input.all();"}  # 'save' = pass through
+                # 'save' = pass through, and report the rows to the mock so tests can see them
+                n["parameters"] = {"jsCode": f"await this.helpers.httpRequest({{ method: 'POST', url: '{MOCK}/saved', body: {{ rows: $input.all().map(i => i.json) }}, json: true }});\nreturn $input.all();"}
             else:
                 data = SETTINGS if n["name"] == "Read Settings" else posts
                 n["parameters"] = {"jsCode": f"return {json.dumps(data, ensure_ascii=False)}.map(j => ({{ json: j }}));"}
+        if n["type"] == "n8n-nodes-base.gmail":  # don't send real email: pass the email through
+            n.pop("credentials", None)
+            n["type"], n["typeVersion"], n["parameters"] = "n8n-nodes-base.code", 2, {"jsCode": "return $input.all();"}
         if n["name"] == "Config":
             for a in n["parameters"]["assignments"]["assignments"]:
                 if a["name"] in config:
@@ -114,6 +122,20 @@ def items(result: dict, node: str) -> list[dict]:
 FAILURES = []
 
 
+def http(method: str, url: str, form: dict | None = None) -> tuple[int, str, str]:
+    data = urllib.parse.urlencode(form).encode() if form is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.status, r.headers.get("Content-Type", ""), r.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers.get("Content-Type", ""), e.read().decode()
+
+
+def saved_rows() -> list[dict]:
+    return json.load(urllib.request.urlopen(f"{MOCK}/state"))["saved"]
+
+
 def check(cond: bool, label: str):
     print(("  PASS " if cond else "  FAIL ") + label)
     if not cond:
@@ -128,7 +150,7 @@ def main() -> int:
     tmp = Path(tempfile.mkdtemp())
     tmp.chmod(0o777)
     wf1 = to_test(build_workflows.build_plan_and_write(), POSTS_1, {
-        "openaiBaseUrl": f"{MOCK}/v1", "cloudinaryBaseUrl": f"{MOCK}/v1_1", "cloudinaryCloudName": "demo", "cloudinaryUploadPreset": "unsigned_test", "sheetUrl": "https://docs.google.com/spreadsheets/d/test/edit"})
+        "openaiBaseUrl": f"{MOCK}/v1", "cloudinaryBaseUrl": f"{MOCK}/v1_1", "cloudinaryCloudName": "demo", "cloudinaryUploadPreset": "unsigned_test", "sheetUrl": "https://docs.google.com/spreadsheets/d/test/edit", "approvalLinkUrl": HOOK})
     wf2 = to_test(build_workflows.build_publish(), POSTS_2, {"instagramApiBase": f"{MOCK}/v25.0", "instagramAccountId": "17841400000000000", "sheetUrl": "https://docs.google.com/spreadsheets/d/test/edit"})
     (tmp / "wf1.json").write_text(json.dumps(wf1))
     (tmp / "wf2.json").write_text(json.dumps(wf2))
@@ -170,6 +192,14 @@ def main() -> int:
         check(r6.get("Status") == "PLANNED" and "AI writing failed" in r6.get("Error", ""), "AI failure noted, row kept for retry")
         check(5 not in saved and 7 not in saved, "empty and published rows ignored")
         check(not any(k in r2 for k in ("_openai", "_imageRequest", "_ok")), "internal AI fields not written to the sheet row")
+        code_ = r2.get("Approval Code", "")
+        check(len(code_) == 32 and all(ch in "0123456789abcdef" for ch in code_) and code_ != r4.get("Approval Code"), "each written post gets its own one-time approval code")
+        check(not r3.get("Approval Code") and not r6.get("Approval Code"), "no approval code for posts that were not written")
+        emails = items(res, "Send approval email")
+        e2 = next((e for e in emails if "P0009" in e.get("subject", "")), {})
+        check(len(emails) == 2 and e2.get("to") == "owner@example.com,editor@example.com", "one approval email per written post, sent to the Approver Email(s)")
+        check(all(f"{HOOK}?post=P0009&code={code_}&action={a}" in e2.get("html", "") for a in ("approve", "regenerate", "reject")), "email has Approve / Regenerate / Reject links with the code")
+        check(e2.get("subject", "").startswith("⚠") and "₹4,999" in e2.get("html", "") and r2.get("Image URL", "") in e2.get("html", ""), "email shows image, caption and the warnings")
 
         print("Workflow 2: publish approved posts")
         res = run_data(name, wf2["id"])
@@ -188,6 +218,46 @@ def main() -> int:
         check(len(state["published"]) == 1, "exactly one post sent to (fake) Instagram")
         cap = list(state["containers"].values())[0]
         check(cap["caption"] == "Hello\n\n#a #b" and cap["image_url"] == "https://res.cloudinary.com/demo/x.jpg", "caption + hashtags and image URL sent correctly")
+        res_mail = items(res, "Send result email")
+        mail_html = " ".join(m.get("html", "") for m in res_mail)
+        check(1 <= len(res_mail) <= 2 and all(m.get("to") == "owner@example.com,editor@example.com" for m in res_mail)
+              and all(p in mail_html for p in ("P0001", "P0003", "P0005", "instagram.com/p/MOCK")) and "P0002" not in mail_html and "P0006" not in mail_html,
+              "result email lists the published post (with link) and the failed/problem posts")
+
+        print("Workflow 3: email approval buttons")
+        review_row = dict(r2)  # the post workflow 1 just wrote, as it is now in the sheet
+        wf3 = to_test(build_workflows.build_email_approval(), [review_row, row(9, **{"Post ID": "P0003", "Topic": "Old", "Status": "APPROVED", "Approval Code": "f" * 32})], {"sheetUrl": "https://docs.google.com/spreadsheets/d/test/edit"})
+        (tmp / "wf3.json").write_text(json.dumps(wf3))
+        (tmp / "wf3.json").chmod(0o666)
+        for args in (["import:workflow", "--input=/data/wf3.json"], ["publish:workflow", f"--id={wf3['id']}"]):
+            r = sh(["docker", "exec", name, "n8n", *args])
+            if r.returncode:
+                print(r.stdout, r.stderr)
+        sh(["docker", "restart", name])  # load the now-active webhook
+        for _ in range(60):
+            try:
+                urllib.request.urlopen("http://127.0.0.1:5699/healthz", timeout=2)
+                break
+            except Exception:
+                time.sleep(1)
+        time.sleep(3)
+        before = len(saved_rows())
+        link = f"{HOOK}?post=P0009&code={code_}&action=approve"
+        st, ctype, page = http("GET", link)
+        check(st == 200 and "text/html" in ctype and "Confirm: Approve" in page and 'name="confirm" value="yes"' in page, f"opening the link shows a confirmation page (HTTP {st})")
+        check(len(saved_rows()) == before, "just opening the link changes nothing (safe from email scanners)")
+        st, _, page = http("POST", HOOK, {"post": "P0009", "code": code_, "action": "approve", "confirm": "yes"})
+        new = saved_rows()[before:]
+        check(st == 200 and "Approved" in page, "pressing Confirm shows 'Approved'")
+        check(len(new) == 1 and new[0].get("row_number") == 2 and new[0].get("Status") == "APPROVED" and new[0].get("Approval Code") == "", "sheet row set to APPROVED and the code cleared (one-time link)")
+        before = len(saved_rows())
+        st, _, page = http("POST", HOOK, {"post": "P0009", "code": "0" * 32, "action": "approve", "confirm": "yes"})
+        check(st == 200 and "already used" in page and len(saved_rows()) == before, "wrong or used code is refused, nothing saved")
+        st, _, page = http("POST", HOOK, {"post": "P0003", "code": "f" * 32, "action": "reject", "confirm": "yes"})
+        check("Nothing to do" in page and len(saved_rows()) == before, "post that is no longer NEEDS_REVIEW cannot be changed by email")
+        st, _, page = http("POST", HOOK, {"post": "P0009", "code": code_, "action": "regenerate", "confirm": "yes"})
+        new = saved_rows()[before:]
+        check(len(new) == 1 and new[0].get("Status") == "REGENERATE" and "REGENERATE by email" in new[0].get("Review Notes", ""), "Regenerate button sends the post back to the AI")
     finally:
         logs = sh(["docker", "logs", name]).stdout
         sh(["docker", "rm", "-f", name])

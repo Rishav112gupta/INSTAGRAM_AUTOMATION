@@ -4,7 +4,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## 2. Publish approved posts\nRuns **every 15 minutes**.\n\nPublishes rows whose Status is **APPROVED** and whose date/time has arrived, using the official Instagram API. Writes the Instagram link back to the sheet (Status **PUBLISHED**) or the reason it failed (Status **FAILED**).\n\nOnly APPROVED rows are ever published. A failed post is never retried automatically, so nothing is posted twice.\n\n**Setup:** open **Config**: paste your Google Sheet link and your Instagram account ID. Pick your credentials in the Google Sheets nodes and the Instagram nodes.",
+        "content": "## 2. Publish approved posts\nRuns **every 15 minutes**.\n\nPublishes rows whose Status is **APPROVED** and whose date/time has arrived, using the official Instagram API. Writes the Instagram link back to the sheet (Status **PUBLISHED**) or the reason it failed (Status **FAILED**).\n\nOnly APPROVED rows are ever published. A failed post is never retried automatically, so nothing is posted twice.\n\n**Setup:** open **Config**: paste your Google Sheet link and your Instagram account ID. Pick your credentials in the Google Sheets nodes, the Instagram nodes and the Gmail node (it emails the **Approver Email** what was published or failed).",
         "height": 350,
         "width": 560,
         "color": 5
@@ -466,6 +466,47 @@
           "name": "Google Sheets account"
         }
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================================\n// BUILD RESULT EMAIL  (Code node, mode: Run Once for All Items)\n// After publishing, emails the approver(s): one email listing what was\n// PUBLISHED (with links) and what FAILED or has a PROBLEM (with the reason).\n// ============================================================================\n\nconst settings = {};\nfor (const item of $('Read Settings').all()) {\n  const key = String(item.json['Setting'] ?? '').trim();\n  if (key) settings[key] = String(item.json['Value'] ?? '').trim();\n}\nconst to = (settings['Approver Email'] || '').split(/[,;\\s]+/).filter((e) => /.+@.+\\..+/.test(e)).join(',');\nif (!to) return [];\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst published = [];\nconst problems = [];\nfor (const item of $input.all()) {\n  const r = item.json;\n  const status = String(r['Status'] || '').toUpperCase();\n  if (status === 'PUBLISHED') published.push(r);\n  else if (status === 'FAILED' || status === 'PROBLEM') problems.push(r);\n}\nif (!published.length && !problems.length) return [];\n\nconst li = (r, extra) => `<li style=\"margin-bottom:8px\"><b>${esc(r['Post ID'])}</b> - ${esc(r['Headline'] || r['Topic'])}${extra}</li>`;\nconst html = `<div style=\"font-family:Arial,sans-serif;max-width:560px;color:#0f172a\">\n${published.length ? `<h3 style=\"color:#15803d\">🎉 Published on Instagram</h3><ul>${published.map((r) => li(r, r['Instagram URL'] ? ` - <a href=\"${esc(r['Instagram URL'])}\">view post</a>` : '')).join('')}</ul>` : ''}\n${problems.length ? `<h3 style=\"color:#b91c1c\">🚨 Needs your attention</h3><ul>${problems.map((r) => li(r, `<br><span style=\"color:#b91c1c\">${esc(r['Status'])}: ${esc(r['Error'])}</span>`)).join('')}</ul><p>Fix the problem in the Google Sheet, then set Status to APPROVED again to retry.</p>` : ''}\n</div>`;\nconst subject = problems.length\n  ? `🚨 Instagram: ${problems.length} post(s) need attention${published.length ? `, ${published.length} published` : ''}`\n  : `🎉 Instagram: ${published.length} post(s) published`;\nreturn [{ json: { to, subject, html } }];\n"
+      },
+      "id": "0a715249-db40-55ff-9213-2759dd1cf572",
+      "name": "Build result email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2700,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "0eb7c755-d7f7-5ee6-b23b-55e5b98629a4",
+      "name": "Send result email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2920,
+        140
+      ],
+      "webhookId": "e7c211df-ce90-5fb2-809f-b34309e280fc",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmailCredential",
+          "name": "Gmail account"
+        }
+      }
     }
   ],
   "connections": {
@@ -624,6 +665,28 @@
         [
           {
             "node": "Save to Posts sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Posts sheet": {
+      "main": [
+        [
+          {
+            "node": "Build result email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build result email": {
+      "main": [
+        [
+          {
+            "node": "Send result email",
             "type": "main",
             "index": 0
           }

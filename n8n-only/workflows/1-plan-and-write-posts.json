@@ -4,8 +4,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## 1. Plan & write posts\nRuns **every day at 08:00** (and when you click *Test workflow*).\n\n1. Gives every new topic in the **Posts** tab a Post ID and a date (every N days - set in the **Settings** tab).\n2. A few days before the date, the AI writes the caption, hashtags and creates the image.\n3. The row becomes **NEEDS_REVIEW**. A person reads it and sets Status to **APPROVED** (or **REGENERATE**).\n\n**Setup:** open the **Config** node and paste your Google Sheet link and Cloudinary details. Then pick your credentials in the Google Sheets and OpenAI nodes.",
-        "height": 330,
+        "content": "## 1. Plan & write posts\nRuns **every day at 08:00** (and when you click *Test workflow*).\n\n1. Gives every new topic in the **Posts** tab a Post ID and a date (every N days - set in the **Settings** tab).\n2. A few days before the date, the AI writes the caption, hashtags and creates the image.\n3. The row becomes **NEEDS_REVIEW**. A person reads it and sets Status to **APPROVED** (or **REGENERATE**).\n\n**Email approval (optional):** each new post is emailed to the **Approver Email** (Settings tab) with Approve / Regenerate / Reject buttons. Needs workflow 3 and `approvalLinkUrl` in Config.\n\n**Setup:** open the **Config** node and paste your Google Sheet link and Cloudinary details. Then pick your credentials in the Google Sheets, OpenAI and Gmail nodes.",
+        "height": 390,
         "width": 560,
         "color": 5
       },
@@ -15,7 +15,7 @@
       "typeVersion": 1,
       "position": [
         -420,
-        -320
+        -380
       ]
     },
     {
@@ -94,6 +94,12 @@
               "name": "cloudinaryBaseUrl",
               "value": "https://api.cloudinary.com/v1_1",
               "type": "string"
+            },
+            {
+              "id": "0537ff93-5a32-57e2-a638-14e531ab0aba",
+              "name": "approvalLinkUrl",
+              "value": "PASTE_WORKFLOW_3_PRODUCTION_URL (optional, for email approval)",
+              "type": "string"
             }
           ]
         },
@@ -107,7 +113,7 @@
         -160,
         140
       ],
-      "notes": "Edit me: sheet link + Cloudinary",
+      "notes": "Edit me: sheet link + Cloudinary + approval link",
       "notesInFlow": true
     },
     {
@@ -388,6 +394,22 @@
     },
     {
       "parameters": {
+        "action": "generate",
+        "dataPropertyName": "Approval Code",
+        "encodingType": "hex",
+        "stringLength": 32
+      },
+      "id": "04f80287-610b-597f-be16-313366ec491d",
+      "name": "Create approval code",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        -60
+      ]
+    },
+    {
+      "parameters": {
         "operation": "update",
         "documentId": {
           "__rl": true,
@@ -417,13 +439,54 @@
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        2480,
+        2700,
         140
       ],
       "credentials": {
         "googleSheetsOAuth2Api": {
           "id": "googleSheetsCredential",
           "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================================\n// BUILD APPROVAL EMAIL  (Code node, mode: Run Once for All Items)\n// For every post the AI just wrote (Status NEEDS_REVIEW), builds an email for\n// the approver(s) with the image, caption, hashtags, things to check and\n// Approve / Regenerate / Reject buttons.\n// Buttons open a confirmation page (workflow 3); nothing changes until the\n// person presses \"Confirm\" there.\n// ============================================================================\n\nconst settings = {};\nfor (const item of $('Read Settings').all()) {\n  const key = String(item.json['Setting'] ?? '').trim();\n  if (key) settings[key] = String(item.json['Value'] ?? '').trim();\n}\nconst to = (settings['Approver Email'] || '').split(/[,;\\s]+/).filter((e) => /.+@.+\\..+/.test(e)).join(',');\nconst base = String($('Config').first().json.approvalLinkUrl || '').trim();\nif (!to || !/^https?:\\/\\//.test(base)) return []; // email approval not set up - approve in the sheet instead\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\nconst company = settings['Company Name'] || 'Instagram';\n\nconst out = [];\nfor (const item of $input.all()) {\n  const row = item.json;\n  if (String(row['Status'] || '').toUpperCase() !== 'NEEDS_REVIEW' || !row['Approval Code']) continue;\n\n  const link = (action) => `${base}${base.includes('?') ? '&' : '?'}post=${encodeURIComponent(row['Post ID'])}&code=${encodeURIComponent(row['Approval Code'])}&action=${action}`;\n  const button = (action, label, color) =>\n    `<a href=\"${link(action)}\" style=\"display:inline-block;padding:12px 22px;margin:4px 6px 4px 0;border-radius:8px;background:${color};color:#ffffff;text-decoration:none;font-weight:bold;font-family:Arial,sans-serif\">${label}</a>`;\n  const notes = String(row['Review Notes'] || '');\n  const hasFlags = notes && !/^No issues found/.test(notes);\n  const hashtags = String(row['Hashtags'] || '').split(/\\s+/).filter(Boolean).map((t) => '#' + t.replace(/^#/, '')).join(' ');\n\n  const html = `\n<div style=\"font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#0f172a\">\n  <h2 style=\"margin:0 0 4px\">New Instagram post to approve</h2>\n  <p style=\"margin:0 0 16px;color:#475569\">${esc(row['Post ID'])} &middot; scheduled for <b>${esc(row['Scheduled Date'])} ${esc(row['Post Time'])}</b> &middot; ${esc(row['Category'] || '')}</p>\n  ${row['Image URL'] ? `<img src=\"${esc(row['Image URL'])}\" alt=\"Post image\" style=\"width:100%;max-width:540px;border-radius:10px;border:1px solid #e2e8f0\">` : '<p style=\"color:#b91c1c\"><b>No image yet</b> - choose Regenerate or add an image link in the sheet.</p>'}\n  <h3 style=\"margin:16px 0 6px\">${esc(row['Headline'])}</h3>\n  <div style=\"white-space:pre-wrap;line-height:1.5;background:#f8fafc;padding:12px;border-radius:8px\">${esc(row['Caption'])}</div>\n  <p style=\"color:#4338ca\">${esc(hashtags)}</p>\n  <div style=\"padding:12px;border-radius:8px;margin:12px 0;${hasFlags ? 'background:#fffbeb;border:1px solid #fcd34d' : 'background:#f0fdf4;border:1px solid #86efac'}\">\n    <b>${hasFlags ? '⚠ Please check before approving:' : 'Checks:'}</b>\n    <div style=\"white-space:pre-wrap;margin-top:6px\">${esc(notes || 'No issues found.')}</div>\n  </div>\n  <div style=\"margin:18px 0\">\n    ${button('approve', '✅ Approve', '#16a34a')}\n    ${button('regenerate', '🔁 Regenerate', '#4f46e5')}\n    ${button('reject', '❌ Reject', '#dc2626')}\n  </div>\n  <p style=\"font-size:12px;color:#64748b\">Approve = it will be posted automatically at the scheduled time. Regenerate = the AI writes a new version tomorrow morning (you can add notes in the \"Review Notes\" column first). You can also edit the caption in the Google Sheet before approving. Each button asks you to confirm, and the links work only once.</p>\n</div>`;\n\n  out.push({\n    json: {\n      to,\n      subject: `${hasFlags ? '⚠ ' : ''}Approve Instagram post ${row['Post ID']}: ${String(row['Headline'] || row['Topic'] || '').slice(0, 60)} (${company})`,\n      html,\n    },\n  });\n}\nreturn out;\n"
+      },
+      "id": "75f3ed9a-e2fc-509d-9483-33fde01a60bf",
+      "name": "Build approval email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2920,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "6e1c63ba-668b-5eac-8b29-94815b518f79",
+      "name": "Send approval email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3140,
+        140
+      ],
+      "webhookId": "203a21b9-d864-5a1c-b0e3-2cde15c55cc4",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmailCredential",
+          "name": "Gmail account"
         }
       }
     }
@@ -590,7 +653,40 @@
       "main": [
         [
           {
+            "node": "Create approval code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create approval code": {
+      "main": [
+        [
+          {
             "node": "Save to Posts sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Posts sheet": {
+      "main": [
+        [
+          {
+            "node": "Build approval email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build approval email": {
+      "main": [
+        [
+          {
+            "node": "Send approval email",
             "type": "main",
             "index": 0
           }

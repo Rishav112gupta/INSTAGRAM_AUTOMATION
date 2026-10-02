@@ -1,0 +1,359 @@
+{
+  "name": "Instagram - 3. Email approval",
+  "id": "iaOnlyEmailAppr03",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 3. Email approval\nRuns when someone clicks **Approve / Regenerate / Reject** in an approval email.\n\n1. The button opens a page showing the post with a **Confirm** button (nothing changes yet; this stops email virus scanners from approving by opening the link).\n2. **Confirm** updates the Status in the sheet. Each email link works only once.\n\n**Setup:** paste your Google Sheet link in **Config**, pick the Google Sheets credential, turn this workflow **on**, then open **Link opened**, copy the **Production URL** and paste it into `approvalLinkUrl` in workflow 1's Config.",
+        "height": 360,
+        "width": 560,
+        "color": 5
+      },
+      "id": "fb4821e4-c6ac-5020-8f47-c39ed40afeff",
+      "name": "Read me (3)",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        -380
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "instagram-approval",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "e64b6db1-06c6-5dd5-9e0c-cb546e909441",
+      "name": "Link opened",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        60
+      ],
+      "webhookId": "f0b79d98-8b10-53d2-96f7-1bb2d176ef94"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "instagram-approval",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "39130afd-59a6-5fbb-a4b7-df4b56be3cc2",
+      "name": "Confirm pressed",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        240
+      ],
+      "webhookId": "55e87c5e-2ea3-596c-8b21-da17ae8d8c0a"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e8c60ed8-72b3-5510-80c7-c76a77c0f4b4",
+              "name": "sheetUrl",
+              "value": "PASTE_YOUR_GOOGLE_SHEET_LINK_HERE",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3a9622af-1fb3-5673-83b6-cd5a2d88cf96",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -160,
+        140
+      ],
+      "notes": "Edit me: sheet link",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Config').first().json.sheetUrl }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Settings"
+        },
+        "options": {}
+      },
+      "id": "fcbf7ef2-d669-5734-b9db-077061bc52d0",
+      "name": "Read Settings",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        60,
+        140
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "googleSheetsCredential",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Config').first().json.sheetUrl }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Posts"
+        },
+        "options": {}
+      },
+      "id": "cbe1c9f7-2bc5-5316-ac52-51d6aea18249",
+      "name": "Read Posts",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        280,
+        140
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "googleSheetsCredential",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================================\n// HANDLE APPROVAL CLICK  (Code node, mode: Run Once for All Items)\n// Used by workflow 3 (email approval).\n//  - Link opened (GET): show a confirmation page with the post and a button.\n//    Nothing changes yet - this protects against email scanners that open links.\n//  - \"Confirm\" pressed (POST): check the one-time code, update the Status and\n//    clear the code so the email links cannot be used again.\n// Output: one item with _html (page to show) and _save (true = update the sheet).\n// ============================================================================\n\n// Two webhook nodes share the same address: GET = link opened, POST = Confirm pressed.\nconst req = $('Confirm pressed').isExecuted ? $('Confirm pressed').first().json : $('Link opened').first().json;\nconst body = req.body && typeof req.body === 'object' ? req.body : {};\nconst query = req.query || {};\nconst confirmed = body.confirm === 'yes';\nconst input = confirmed ? body : query;\nconst postId = String(input.post || '').trim();\nconst code = String(input.code || '').trim();\nconst action = String(input.action || '').trim().toLowerCase();\n\nconst settings = {};\nfor (const item of $('Read Settings').all()) {\n  const key = String(item.json['Setting'] ?? '').trim();\n  if (key) settings[key] = String(item.json['Value'] ?? '').trim();\n}\nconst tz = settings['Timezone'] || 'Asia/Kolkata';\n\nconst ACTIONS = {\n  approve: { status: 'APPROVED', label: 'Approve', color: '#16a34a', done: 'Approved ✅', after: 'It will be posted automatically at the scheduled time.' },\n  regenerate: { status: 'REGENERATE', label: 'Regenerate', color: '#4f46e5', done: 'Sent back to the AI 🔁', after: 'A new version will be written tomorrow morning and emailed to you.' },\n  reject: { status: 'REJECTED', label: 'Reject', color: '#dc2626', done: 'Rejected ❌', after: 'This post will not be published.' },\n};\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\nconst page = (title, inner) => `<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>${esc(title)}</title></head>\n<body style=\"font-family:Arial,sans-serif;background:#f1f5f9;margin:0;padding:24px\"><div style=\"max-width:520px;margin:auto;background:#fff;border-radius:12px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,.1)\">\n<h2 style=\"margin-top:0\">${esc(title)}</h2>${inner}</div></body></html>`;\nconst result = (html, update = null) => [{ json: { _html: html, _save: Boolean(update), ...(update || {}) } }];\n\nconst act = ACTIONS[action];\nconst rowItem = $input.all().find((i) => String(i.json['Post ID'] || '').trim() === postId);\nconst row = rowItem ? rowItem.json : null;\n\nif (!act || !postId || !code) return result(page('Invalid link', '<p>This link is incomplete. Please use the buttons in the approval email, or change the Status in the Google Sheet.</p>'));\nif (!row) return result(page('Post not found', `<p>Post ${esc(postId)} is not in the sheet any more.</p>`));\nconst status = String(row['Status'] || '').toUpperCase();\nif (!row['Approval Code'] || row['Approval Code'] !== code) {\n  return result(page('Link already used or expired', `<p>Post <b>${esc(postId)}</b> is currently <b>${esc(status || 'not set')}</b>. Each email link works only once. If you need to change it, edit the Status in the Google Sheet.</p>`));\n}\nif (status !== 'NEEDS_REVIEW') {\n  return result(page('Nothing to do', `<p>Post <b>${esc(postId)}</b> is <b>${esc(status)}</b>, so it can no longer be changed from the email.</p>`));\n}\n\nif (!confirmed) {\n  const preview = `\n${row['Image URL'] ? `<img src=\"${esc(row['Image URL'])}\" alt=\"\" style=\"width:100%;border-radius:8px\">` : ''}\n<h3>${esc(row['Headline'])}</h3>\n<p style=\"white-space:pre-wrap;background:#f8fafc;padding:10px;border-radius:8px;max-height:240px;overflow:auto\">${esc(row['Caption'])}</p>\n<p>Scheduled for <b>${esc(row['Scheduled Date'])} ${esc(row['Post Time'])}</b></p>\n<form method=\"post\">\n  <input type=\"hidden\" name=\"post\" value=\"${esc(postId)}\"><input type=\"hidden\" name=\"code\" value=\"${esc(code)}\">\n  <input type=\"hidden\" name=\"action\" value=\"${esc(action)}\"><input type=\"hidden\" name=\"confirm\" value=\"yes\">\n  <button type=\"submit\" style=\"padding:12px 24px;border:0;border-radius:8px;background:${act.color};color:#fff;font-size:16px;font-weight:bold;cursor:pointer\">Confirm: ${esc(act.label)}</button>\n</form>`;\n  return result(page(`${act.label} post ${postId}?`, preview));\n}\n\nconst update = {\n  row_number: row.row_number,\n  Status: act.status,\n  'Approval Code': '', // one-time links\n  'Last Updated': DateTime.now().setZone(tz).toFormat('yyyy-MM-dd HH:mm'),\n};\nif (action !== 'approve') update['Review Notes'] = `${String(row['Review Notes'] || '')}\\n[${act.status} by email ${update['Last Updated']}]`.trim();\nreturn result(page(act.done, `<p>Post <b>${esc(postId)}</b>: ${esc(act.after)}</p><p style=\"color:#64748b\">You can close this page.</p>`), update);\n"
+      },
+      "id": "94a2770d-f2e8-5712-b1ce-cb26f4a7e80e",
+      "name": "Handle click",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f1b43e8e-7e7d-558a-9c50-4d249ce82c96",
+              "leftValue": "={{ $json._save }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "98f36074-5e72-581a-9f0f-d4894e3e8870",
+      "name": "Save?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Config').first().json.sheetUrl }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Posts"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": []
+        },
+        "options": {
+          "handlingExtraData": "ignoreIt",
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "bc83a61d-9ba8-5679-a0dd-7f3ed4e1846f",
+      "name": "Save to Posts sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        940,
+        40
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "googleSheetsCredential",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $('Handle click').first().json._html }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "bbdbc7c7-253e-56e4-a47c-91380cea0a53",
+      "name": "Show page",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1160,
+        140
+      ]
+    }
+  ],
+  "connections": {
+    "Link opened": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm pressed": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Read Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Settings": {
+      "main": [
+        [
+          {
+            "node": "Read Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Posts": {
+      "main": [
+        [
+          {
+            "node": "Handle click",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle click": {
+      "main": [
+        [
+          {
+            "node": "Save?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save?": {
+      "main": [
+        [
+          {
+            "node": "Save to Posts sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Show page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Posts sheet": {
+      "main": [
+        [
+          {
+            "node": "Show page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata",
+    "saveManualExecutions": true
+  },
+  "pinData": {},
+  "tags": []
+}

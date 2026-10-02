@@ -19,6 +19,7 @@ OUT = HERE / "workflows"
 GOOGLE = {"googleSheetsOAuth2Api": {"id": "googleSheetsCredential", "name": "Google Sheets account"}}
 OPENAI = {"openAiApi": {"id": "openAiCredential", "name": "OpenAI account"}}
 INSTAGRAM = {"httpQueryAuth": {"id": "instagramTokenCredential", "name": "Instagram access token"}}
+GMAIL = {"gmailOAuth2": {"id": "gmailCredential", "name": "Gmail account"}}
 NEVER_ERROR = {"response": {"response": {"neverError": True}}}
 
 
@@ -125,6 +126,41 @@ def http(name: str, pos, *, method: str, url: str, credentials: dict | None = No
     return node
 
 
+def gmail(name: str, pos) -> dict:
+    """Sends one email per incoming item ({to, subject, html})."""
+    return {
+        "parameters": {
+            "resource": "message",
+            "operation": "send",
+            "sendTo": "={{ $json.to }}",
+            "subject": "={{ $json.subject }}",
+            "emailType": "html",
+            "message": "={{ $json.html }}",
+            "options": {"appendAttribution": False},
+        },
+        "id": nid(name),
+        "name": name,
+        "type": "n8n-nodes-base.gmail",
+        "typeVersion": 2.1,
+        "position": pos,
+        "webhookId": nid(name + "-webhook"),
+        "credentials": GMAIL,
+    }
+
+
+def webhook(name: str, method: str, pos) -> dict:
+    """Both approval webhooks share one address; the HTTP method decides which one runs."""
+    return {
+        "parameters": {"httpMethod": method, "path": "instagram-approval", "responseMode": "responseNode", "options": {}},
+        "id": nid(name),
+        "name": name,
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": pos,
+        "webhookId": nid("instagram-approval-" + method),
+    }
+
+
 def link(connections: dict, src: str, dst: str, output: int = 0) -> None:
     outs = connections.setdefault(src, {"main": []})["main"]
     while len(outs) <= output:
@@ -169,11 +205,13 @@ def build_plan_and_write() -> dict:
             "1. Gives every new topic in the **Posts** tab a Post ID and a date (every N days - set in the **Settings** tab).\n"
             "2. A few days before the date, the AI writes the caption, hashtags and creates the image.\n"
             "3. The row becomes **NEEDS_REVIEW**. A person reads it and sets Status to **APPROVED** (or **REGENERATE**).\n\n"
+            "**Email approval (optional):** each new post is emailed to the **Approver Email** (Settings tab) "
+            "with Approve / Regenerate / Reject buttons. Needs workflow 3 and `approvalLinkUrl` in Config.\n\n"
             "**Setup:** open the **Config** node and paste your Google Sheet link and Cloudinary details. "
-            "Then pick your credentials in the Google Sheets and OpenAI nodes.",
-            [-420, -320],
+            "Then pick your credentials in the Google Sheets, OpenAI and Gmail nodes.",
+            [-420, -380],
             width=560,
-            height=330,
+            height=390,
         ),
         {"parameters": {"rule": {"interval": [{"field": "days", "triggerAtHour": 8}]}}, "id": nid("Every day 08:00"), "name": "Every day 08:00", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [-400, 60]},
         {"parameters": {}, "id": nid("Test run"), "name": "Test run", "type": "n8n-nodes-base.manualTrigger", "typeVersion": 1, "position": [-400, 240]},
@@ -187,9 +225,10 @@ def build_plan_and_write() -> dict:
                 ("imageModel", "gpt-image-1"),
                 ("openaiBaseUrl", "https://api.openai.com/v1"),
                 ("cloudinaryBaseUrl", "https://api.cloudinary.com/v1_1"),
+                ("approvalLinkUrl", "PASTE_WORKFLOW_3_PRODUCTION_URL (optional, for email approval)"),
             ],
             [-160, 140],
-            "Edit me: sheet link + Cloudinary",
+            "Edit me: sheet link + Cloudinary + approval link",
         ),
         read_sheet("Read Settings", "Settings", [60, 140]),
         read_sheet("Read Posts", "Posts", [280, 140]),
@@ -228,7 +267,18 @@ def build_plan_and_write() -> dict:
             timeout=120000,
         ),
         code("Prepare row", "prepare_row.js", [2260, -60], "runOnceForEachItem"),
-        save_sheet("Save to Posts sheet", [2480, 140]),
+        {
+            # One-time secret for the email buttons, so nobody can approve by guessing a link.
+            "parameters": {"action": "generate", "dataPropertyName": "Approval Code", "encodingType": "hex", "stringLength": 32},
+            "id": nid("Create approval code"),
+            "name": "Create approval code",
+            "type": "n8n-nodes-base.crypto",
+            "typeVersion": 2,
+            "position": [2480, -60],
+        },
+        save_sheet("Save to Posts sheet", [2700, 140]),
+        code("Build approval email", "build_approval_email.js", [2920, 140]),
+        gmail("Send approval email", [3140, 140]),
     ]
     c: dict = {}
     link(c, "Every day 08:00", "Config")
@@ -246,7 +296,10 @@ def build_plan_and_write() -> dict:
     link(c, "Text OK?", "Save to Posts sheet", 1)  # AI failed: error noted, retried tomorrow
     link(c, "Create image with AI", "Upload image to Cloudinary")
     link(c, "Upload image to Cloudinary", "Prepare row")
-    link(c, "Prepare row", "Save to Posts sheet")
+    link(c, "Prepare row", "Create approval code")
+    link(c, "Create approval code", "Save to Posts sheet")
+    link(c, "Save to Posts sheet", "Build approval email")
+    link(c, "Build approval email", "Send approval email")
     return workflow("Instagram - 1. Plan & write posts (AI)", "iaOnlyPlanWrite01", nodes, c)
 
 
@@ -264,7 +317,8 @@ def build_publish() -> dict:
             "Writes the Instagram link back to the sheet (Status **PUBLISHED**) or the reason it failed (Status **FAILED**).\n\n"
             "Only APPROVED rows are ever published. A failed post is never retried automatically, so nothing is posted twice.\n\n"
             "**Setup:** open **Config**: paste your Google Sheet link and your Instagram account ID. "
-            "Pick your credentials in the Google Sheets nodes and the Instagram nodes.",
+            "Pick your credentials in the Google Sheets nodes, the Instagram nodes and the Gmail node "
+            "(it emails the **Approver Email** what was published or failed).",
             [-420, -340],
             width=560,
             height=350,
@@ -321,6 +375,8 @@ def build_publish() -> dict:
         ),
         code("Publish result", "publish_result.js", [2260, 40], "runOnceForEachItem"),
         save_sheet("Save to Posts sheet", [2480, 140]),
+        code("Build result email", "build_result_email.js", [2700, 140]),
+        gmail("Send result email", [2920, 140]),
     ]
     c: dict = {}
     link(c, "Every 15 minutes", "Config")
@@ -338,11 +394,70 @@ def build_publish() -> dict:
     link(c, "Publish to Instagram", "Get post link")
     link(c, "Get post link", "Publish result")
     link(c, "Publish result", "Save to Posts sheet")
+    link(c, "Save to Posts sheet", "Build result email")
+    link(c, "Build result email", "Send result email")
     return workflow("Instagram - 2. Publish approved posts", "iaOnlyPublish0002", nodes, c)
+
+
+# ---------------------------------------------------------------------------
+# Workflow 3: Approve / Regenerate / Reject buttons in the approval email
+# ---------------------------------------------------------------------------
+def build_email_approval() -> dict:
+    nodes = [
+        sticky(
+            "Read me (3)",
+            "## 3. Email approval\n"
+            "Runs when someone clicks **Approve / Regenerate / Reject** in an approval email.\n\n"
+            "1. The button opens a page showing the post with a **Confirm** button (nothing changes yet; "
+            "this stops email virus scanners from approving by opening the link).\n"
+            "2. **Confirm** updates the Status in the sheet. Each email link works only once.\n\n"
+            "**Setup:** paste your Google Sheet link in **Config**, pick the Google Sheets credential, "
+            "turn this workflow **on**, then open **Link opened**, copy the **Production URL** and paste it "
+            "into `approvalLinkUrl` in workflow 1's Config.",
+            [-420, -380],
+            width=560,
+            height=360,
+        ),
+        webhook("Link opened", "GET", [-400, 60]),
+        webhook("Confirm pressed", "POST", [-400, 240]),
+        config("Config", [("sheetUrl", "PASTE_YOUR_GOOGLE_SHEET_LINK_HERE")], [-160, 140], "Edit me: sheet link"),
+        read_sheet("Read Settings", "Settings", [60, 140]),
+        read_sheet("Read Posts", "Posts", [280, 140]),
+        code("Handle click", "handle_approval_click.js", [500, 140]),
+        if_true("Save?", "_save", [720, 140]),
+        save_sheet("Save to Posts sheet", [940, 40]),
+        {
+            "parameters": {
+                "respondWith": "text",
+                "responseBody": "={{ $('Handle click').first().json._html }}",
+                "options": {"responseHeaders": {"entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]}},
+            },
+            "id": nid("Show page"),
+            "name": "Show page",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [1160, 140],
+        },
+    ]
+    c: dict = {}
+    link(c, "Link opened", "Config")
+    link(c, "Confirm pressed", "Config")
+    link(c, "Config", "Read Settings")
+    link(c, "Read Settings", "Read Posts")
+    link(c, "Read Posts", "Handle click")
+    link(c, "Handle click", "Save?")
+    link(c, "Save?", "Save to Posts sheet", 0)
+    link(c, "Save?", "Show page", 1)
+    link(c, "Save to Posts sheet", "Show page")
+    return workflow("Instagram - 3. Email approval", "iaOnlyEmailAppr03", nodes, c)
 
 
 if __name__ == "__main__":
     OUT.mkdir(exist_ok=True)
-    for fname, wf in (("1-plan-and-write-posts.json", build_plan_and_write()), ("2-publish-approved-posts.json", build_publish())):
+    for fname, wf in (
+        ("1-plan-and-write-posts.json", build_plan_and_write()),
+        ("2-publish-approved-posts.json", build_publish()),
+        ("3-email-approval.json", build_email_approval()),
+    ):
         (OUT / fname).write_text(json.dumps(wf, indent=2, ensure_ascii=False) + "\n")
         print("wrote", OUT / fname)

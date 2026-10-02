@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, urlparse
 # 1x1 PNG
 PNG = base64.b64encode(bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000" "1f15c4890000000d49444154789c6360000002000154a24f5b0000000049454e44ae426082")).decode()
 LOCK = threading.Lock()
-STATE = {"containers": {}, "published": [], "requests": []}
+STATE = {"containers": {}, "published": [], "requests": [], "saved": []}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -83,6 +83,11 @@ class Handler(BaseHTTPRequestHandler):
             if not body.get("upload_preset") or not str(body.get("file", "")).startswith("data:image/png;base64,") or len(body["file"]) < 40:
                 return self._send(400, {"error": {"message": "Invalid file or upload preset"}})
             return self._send(200, {"secure_url": "https://res.cloudinary.com/demo/image/upload/v1/instagram-automation/abc123.png"})
+        # ---- Test-only: records what workflow 3 would save to the sheet ----
+        if u.path == "/saved":
+            with LOCK:
+                STATE["saved"].extend(body.get("rows", []))
+            return self._send(200, {"ok": True})
         # ---- Instagram Graph API ----
         if q.get("access_token") != "test-token":
             return self._send(400, {"error": {"message": "Invalid OAuth access token", "type": "OAuthException", "code": 190}})

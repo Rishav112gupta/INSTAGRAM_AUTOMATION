@@ -29,6 +29,7 @@ COLUMNS = [
     ("Container ID", 18, "Technical"),
     ("Error", 40, "Why something failed"),
     ("Last Updated", 17, "Automatic"),
+    ("Approval Code", 16, "Automatic - for the email buttons"),
 ]
 
 SETTINGS = [
@@ -50,6 +51,7 @@ SETTINGS = [
     ("Generate Days Before", "3", "How many days before the date the AI writes the post"),
     ("Timezone", "Asia/Kolkata", ""),
     ("Headline On Image", "No", "Yes = write the headline on the image (Cloudinary)"),
+    ("Approver Email", "", "Who gets the approval emails (separate several with commas). Empty = approve in this sheet only."),
 ]
 
 STATUS_HELP = [
@@ -79,7 +81,7 @@ def build(path: Path) -> None:
         ws.column_dimensions[c.column_letter].width = width
     ws.freeze_panes = "C2"
     # Keep dates/times as plain text so nothing gets converted by locale.
-    for col in ("A", "G", "H", "P", "Q"):
+    for col in ("A", "G", "H", "P", "Q", "T"):
         for r in range(2, 1001):
             ws[f"{col}{r}"].number_format = "@"
     examples = [
@@ -125,7 +127,7 @@ def build(path: Path) -> None:
         "Daily routine:",
         "1. Add topics as new rows in the Posts tab (only Topic is required).",
         "2. Filter Status = NEEDS_REVIEW. Read caption + Review Notes, open the Image URL, edit if needed.",
-        "3. Set Status to APPROVED (or REGENERATE / REJECTED).",
+        "3. Set Status to APPROVED (or REGENERATE / REJECTED) - or click the buttons in the approval email.",
         "4. Approved posts are published automatically at their Scheduled Date + Post Time.",
         "Do not rename the column headers or the tab names (Posts, Settings).",
     ]
