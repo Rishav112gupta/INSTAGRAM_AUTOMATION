@@ -15,7 +15,7 @@ Point a DNS record (for example `social.yourcompany.com`) to the server's IP add
 ## 2. Get the code and configure
 
 ```bash
-git clone <your repository URL> && cd <repo>/instagram-automation
+git clone https://github.com/Rishav112gupta/INSTAGRAM_AUTOMATION.git && cd INSTAGRAM_AUTOMATION
 cp .env.example .env
 nano .env
 ```

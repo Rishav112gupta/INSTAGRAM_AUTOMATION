@@ -41,7 +41,7 @@
 ## Folder structure
 
 ```
-instagram-automation/
+INSTAGRAM_AUTOMATION/
 ├── backend/
 │   ├── app/
 │   │   ├── api/            deps.py (auth/roles/rate limits), routes/*.py

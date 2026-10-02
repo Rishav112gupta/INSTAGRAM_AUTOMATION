@@ -83,7 +83,7 @@ Every external service sits behind an interface with a **mock implementation**, 
 ## 3. Folder structure
 
 ```
-instagram-automation/
+INSTAGRAM_AUTOMATION/
 ├── backend/
 │   ├── app/
 │   │   ├── api/routes/        HTTP endpoints (auth, posts, planning, integrations, config)
@@ -121,8 +121,8 @@ External accounts are **only** needed when you switch off the mocks: an LLM API 
 ## 5. Installation
 
 ```bash
-git clone <this repository>
-cd <repository>/instagram-automation
+git clone https://github.com/Rishav112gupta/INSTAGRAM_AUTOMATION.git
+cd INSTAGRAM_AUTOMATION
 cp .env.example .env          # Windows PowerShell: copy .env.example .env
 ```
 
@@ -205,7 +205,7 @@ npm install
 npm run dev          # http://localhost:5173
 ```
 
-Settings are read from `backend/.env` or `instagram-automation/.env`.
+Settings are read from `backend/.env` or the `.env` file in the project root.
 
 ## 9. Running tests
 
@@ -236,7 +236,7 @@ Tests never call real services and never publish to Instagram. They cover post c
    GOOGLE_SHEET_WORKSHEET=Posts
    GOOGLE_SERVICE_ACCOUNT_FILE=/app/secrets/google-sa.json
    ```
-   With Docker, put the JSON in `instagram-automation/secrets/google-sa.json` (git-ignored) and add `- ./secrets:/app/secrets:ro` under `volumes:` in the `x-backend` section of `docker-compose.yml`. Alternatively paste the whole JSON on one line into `GOOGLE_SERVICE_ACCOUNT_JSON`.
+   With Docker, put the JSON in `secrets/google-sa.json` (in the project root) (git-ignored) and add `- ./secrets:/app/secrets:ro` under `volumes:` in the `x-backend` section of `docker-compose.yml`. Alternatively paste the whole JSON on one line into `GOOGLE_SERVICE_ACCOUNT_JSON`.
 6. Restart, then **Settings → Google Sheets → Sync now** (optionally turn on auto-sync every 30 minutes).
 
 Columns: `Post ID, Date, Category, Topic, Target Audience, Status, Caption, Image, Scheduled Time, Published, Instagram URL, Last Synced`. To request content from the sheet, add a row with a Category key (e.g. `EXAM`), a Topic and Status `NEW`, leaving Post ID empty; it becomes a draft on the next sync.
